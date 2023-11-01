@@ -1,64 +1,52 @@
 #!/bin/bash
-# Um script feito para sistemas Linux        #
-# Para  monitora a replicação do mysql.      #
-#  Create By Welligton Alves - Linux4Life    #
-#
+# Um script para monitorar a replicação do MySQL em sistemas Linux - Eulabs
+# Criado por Welligton Alves - Linux4Life
+# Adicione ao cron:
+# */1 * * * * bash /opt/NoOps/check-replication.sh
 
 HOSTNAME=$(hostname)
 IP=$(hostname -I)
 arquivo="$PWD/replicationStatus.txt"
-WEBHOOK=""          #UrlWebHook 
-USER=""             #UsuarioMysql
-PASS=""             #SenhaMysql
+MONITOR="$EulabsMonitor"
+USER=" " # <------< Variável para o usuario do banco 
+PASS=" " # <------< Variável para a senha do banco
+ID=" " # <------< Variável para o numero do do celular ou id do grupo
+AUTH_TOKEN=" " # <------< Variável para o token
+NOTIFICATION_URL=" "  # <------< Variável para a URL da notificação
 
-#Defina o número máximo de segundos atrás do master que será ignorado.
-# Se o slave for maior que maximumSecondsBehind, uma mensagem no slack será enviada.
-#
-maximumSecondsBehind=300
+# Checando o status de replicação do MySQL e salvando em um arquivo temporário
+/usr/local/mysql/bin/mysql -u $USER -p$PASS -e 'SHOW SLAVE STATUS\G' | grep 'Running:\|Master_Host:\|Last_SQL_Error:' > "$arquivo"
 
-#
-# Checando replicação MySQL...
-/usr/local/mysql/bin/mysql -u $USER -p$PASS -e 'SHOW SLAVE STATUS \G' | grep 'Running:\|Master:\|Error:' > replicationStatus.txt
+# Exibindo os resultados
+echo "Resultados:"
+cat "$arquivo"
 
-#Utilizando 
-#mysql -u $USER -p$PASS -e 'SHOW SLAVE STATUS \G' | grep 'Running:\|Master:\|Error:' > replicationStatus.txt
+# Verificando os parâmetros
+slaveRunning=$(grep -c "Slave_IO_Running: Yes" "$arquivo")
+slaveSQLRunning=$(grep -c "Slave_SQL_Running: Yes" "$arquivo")
+secondsBehind=$(grep "Seconds_Behind_Master" "$arquivo" | awk '{print $2}')
 
-#
-# printa o resultado
-#
-echo "Results:"
-cat replicationStatus.txt
+# Função para enviar notificações
+send_notification() {
+  local message="$1"
+  curl --location "$NOTIFICATION_URL" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --header "Authorization: Bearer $AUTH_TOKEN" \
+    --data-urlencode "id=$ID" \
+    --data-urlencode "message=$message"
+}
 
-#
-# checa os parâmentros
-#
-slaveRunning="$(cat replicationStatus.txt | grep "Slave_IO_Running: Yes" | wc -l)"
-slaveSQLRunning="$(cat replicationStatus.txt | grep "Slave_SQL_Running: Yes" | wc -l)"
-secondsBehind="$(cat replicationStatus.txt | grep "Seconds_Behind_Master" | tr -dc '0-9')"
-#
-# Slack Notificação
-
-if [[ $slaveRunning != 1 || $slaveSQLRunning != 1 ]]; then
-  echo ""
-          curl -X POST -H 'Content-type: application/json' --data "{"text":':x:\n :x:\n Problema de replicação encontrado com o $HOSTNAME $IP em $(date)\n :x:\n :x:\n' }" $WEBHOOK
-
+# Notificações baseadas nos resultados
+if [[ $slaveRunning -ne 1 || $slaveSQLRunning -ne 1 ]]; then
+  message="$MONITOR Problema de replicação encontrado com $HOSTNAME ($IP) em $(date)."
+  send_notification "$message"
 else
-  echo ""
-  echo "A replicação parece boa no $HOSTNAME."
+  echo -e "A replicação parece boa em $HOSTNAME ($IP) em $(date)."
 fi
 
-if [[ $secondsBehind -gt $maximumSecondsBehind ]]; then
-  echo ""
-          curl -X POST -H 'Content-type: application/json' --data "{"text":':x:\n :x:\n Atraso na replicação encontrado com o $HOSTNAME $IP em $(date)\n :x:\n :x:\n' }" $WEBHOOK
-
+if [[ $secondsBehind -gt $ʋ ]]; then
+  message="$MONITOR Atraso encontrado na replicação com $HOSTNAME ($IP) em $(date)."
+  send_notification "$message"
 else
-  echo ""
-  echo "A replicação parece boa no $HOSTNAME."
-fi
-
-while read line; do
-echo -e "$line\n";
-curl -X POST -H 'Content-type: application/json' --data "{"text":'Informações sobre a replicação no Host: $HOSTNAME\n  $line\n  em $(date)' }" $WEBHOOK
-done < $arquivo
-
-fi
+  echo -e "Sem atrasos, a replicação parece boa em $HOSTNAME ($IP) em $(date)."
+}
